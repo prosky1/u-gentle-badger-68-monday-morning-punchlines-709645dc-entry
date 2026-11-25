@@ -1,42 +1,81 @@
-// Monday Morning Punchlines — u-gentle-badger-68-monday-morning-punchlines-709645dc
-// Writes one joke about Monday mornings to /output/entry.txt.
-// Gate: UTF-8 text, 1–200 characters, a single line.
+// Monday Morning Punchlines — entry writer.
+//
+// The joke lives in JOKE below. Before anything is written, the text is
+// passed through a table of independent gates (CHECKS). A gate is a small
+// object: a label, a predicate, and the hint shown when it fails. Adding a
+// new rule means adding one row to the table, not touching the writer.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 
-const JOKE = "Monday is the only day the snooze button files for overtime.";
+const JOKE =
+  "Monday is the only day the snooze button files for overtime.";
 
-function validate(text: string): void {
-  if (text.length === 0 || text.length > 200) {
-    throw new Error(`entry must be 1-200 characters, got ${text.length}`);
+const OUT_DIR = "/output";
+const OUT_PATH = `${OUT_DIR}/entry.txt`;
+const MAX_CHARS = 200;
+
+type Gate = {
+  label: string;
+  passes: (text: string) => boolean;
+  hint: string;
+};
+
+const CHECKS: Gate[] = [
+  {
+    label: "non-blank",
+    passes: (text) => text.trim().length > 0,
+    hint: "the joke must contain more than whitespace",
+  },
+  {
+    label: "length",
+    passes: (text) => [...text].length >= 1 && [...text].length <= MAX_CHARS,
+    hint: `the joke must be 1-${MAX_CHARS} characters`,
+  },
+  {
+    label: "single-line",
+    passes: (text) => !/[\r\n]/.test(text),
+    hint: "the joke must fit on one line",
+  },
+  {
+    label: "printable-ascii",
+    passes: (text) => /^[\x20-\x7E]*$/.test(text),
+    hint: "the joke must be printable ASCII only",
+  },
+  {
+    label: "about-monday",
+    passes: (text) => /monday/i.test(text),
+    hint: "the joke must be about Monday morning",
+  },
+];
+
+function failingGates(text: string): Gate[] {
+  return CHECKS.filter((gate) => !gate.passes(text));
+}
+
+function verifyRoundTrip(text: string): void {
+  // Read the file back and compare byte for byte: a silent encoding or
+  // newline surprise on disk must fail loudly here, not at grading time.
+  const onDisk = readFileSync(OUT_PATH, "utf8");
+  if (onDisk !== text) {
+    throw new Error(
+      `round-trip mismatch: wrote ${text.length} chars, disk holds ${onDisk.length}`,
+    );
   }
-  if (text.trim().length === 0) {
-    throw new Error("entry must not be only whitespace");
-  }
-  if (/[\r\n]/.test(text)) {
-    throw new Error("entry must be a single line");
-  }
-  if (!/^[\x00-\x7F]*$/.test(text)) {
-    throw new Error("entry must be plain ASCII");
-  }
-  // The brief is a joke about Monday mornings: the text must say so.
-  if (!/monday/i.test(text)) {
-    throw new Error("entry must be a joke about Monday mornings");
+  if (onDisk.endsWith("\n") || onDisk.endsWith("\r")) {
+    throw new Error("round-trip mismatch: trailing newline on disk");
   }
 }
 
-function main(): void {
-  validate(JOKE);
-  const outPath = "/output/entry.txt";
-  mkdirSync(dirname(outPath), { recursive: true });
-  writeFileSync(outPath, JOKE, "utf8");
-  // Read back and verify byte-identical output.
-  const back = readFileSync(outPath, "utf8");
-  if (back !== JOKE) {
-    throw new Error("read-back mismatch: output differs from joke");
+function publish(text: string): void {
+  const failed = failingGates(text);
+  if (failed.length > 0) {
+    const lines = failed.map((gate) => ` - ${gate.label}: ${gate.hint}`);
+    throw new Error(`entry rejected by ${failed.length} gate(s):\n${lines.join("\n")}`);
   }
-  console.log(`wrote ${JOKE.length} chars to ${outPath}`);
+  mkdirSync(OUT_DIR, { recursive: true });
+  writeFileSync(OUT_PATH, text, "utf8");
+  verifyRoundTrip(text);
+  console.log(`wrote ${[...text].length} chars to ${OUT_PATH}`);
 }
 
-main();
+publish(JOKE);
